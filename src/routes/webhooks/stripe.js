@@ -1,3 +1,4 @@
+```javascript
 // =============================================================================
 // POST /v1/webhooks/stripe — the one platform that's live today.
 //
@@ -51,8 +52,19 @@ router.post('/', async (req, res) => {
       case 'customer.subscription.updated':
       case 'customer.subscription.deleted': {
         const sub = event.data.object;
-        const customer = await findCustomerByPlatformIdentity('stripe', sub.customer);
-        if (!customer) break; // subscription created before checkout.session.completed landed; Stripe retries
+        let customer = await findCustomerByPlatformIdentity('stripe', sub.customer);
+        if (!customer) {
+          // Event ordering with checkout.session.completed is NOT guaranteed —
+          // this event can arrive first. Don't depend on the other handler
+          // having already linked the customer; resolve straight from Stripe.
+          const stripeCustomer = await stripe.customers.retrieve(sub.customer);
+          const email = ((stripeCustomer && !stripeCustomer.deleted && stripeCustomer.email) || '').toLowerCase();
+          if (!email) break; // nothing to link this subscription to
+          customer = await findOrCreateCustomerByEmail(email);
+          await linkPlatformIdentity({
+            customerId: customer.id, platform: 'stripe', externalCustomerId: sub.customer,
+          });
+        }
 
         const priceId = sub.items?.data?.[0]?.price?.id;
         // Resolves via product_platform_skus (seeded by `npm run seed`), which is
@@ -75,7 +87,19 @@ router.post('/', async (req, res) => {
 
       case 'invoice.payment_failed': {
         const invoice = event.data.object;
-        const customer = await findCustomerByPlatformIdentity('stripe', invoice.customer);
+        let customer = await findCustomerByPlatformIdentity('stripe', invoice.customer);
+        if (!customer) {
+          // Same ordering fallback as above — a failed invoice can in principle
+          // arrive before checkout.session.completed has linked the customer.
+          const stripeCustomer = await stripe.customers.retrieve(invoice.customer);
+          const email = ((stripeCustomer && !stripeCustomer.deleted && stripeCustomer.email) || '').toLowerCase();
+          if (email) {
+            customer = await findOrCreateCustomerByEmail(email);
+            await linkPlatformIdentity({
+              customerId: customer.id, platform: 'stripe', externalCustomerId: invoice.customer,
+            });
+          }
+        }
         if (customer && invoice.subscription) {
           await upsertEntitlement({
             customerId: customer.id,
@@ -116,3 +140,4 @@ function mapStripeStatus(stripeStatus) {
     default: return 'expired';
   }
 }
+```
