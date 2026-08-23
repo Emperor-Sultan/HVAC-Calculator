@@ -1,0 +1,21 @@
+{
+  "name": "hetech-bim-hvac-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Platform-agnostic customer/subscription (entitlement) backend for HETECH BIM HVAC. Stripe is wired live today; Apple App Store, Google Play, and Microsoft Store are pre-wired stubs so listing on those stores later does not require a schema or API redesign.",
+  "type": "module",
+  "engines": { "node": ">=18.17" },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "migrate": "node src/db/migrate.js",
+    "seed": "node src/db/seedSkus.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "pg": "^8.12.0",
+    "stripe": "^16.8.0"
+  }
+}
