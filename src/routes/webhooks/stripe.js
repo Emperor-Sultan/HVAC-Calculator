@@ -29,16 +29,15 @@ router.post('/', async (req, res) => {
     return res.status(400).send(`Webhook signature verification failed: ${err.message}`);
   }
 
-  const isNew = await recordWebhookEventOnce({
-    platform: 'stripe', externalEventId: event.id, payload: event,
-  });
-  if (!isNew) return res.json({ received: true, duplicate: true });
-
   try {
     switch (event.type) {
       case 'checkout.session.completed': {
         const session = event.data.object;
-        const email = (session.customer_email || session.metadata?.hetech_email || '').toLowerCase();
+        // customer_email is only set when WE pass it at session-creation time (our own
+        // checkout-session endpoint does). Payment Links and any session where the
+        // customer typed their own email instead put it under customer_details.email —
+        // check both so no payment path silently fails to link a customer.
+        const email = (session.customer_email || session.customer_details?.email || session.metadata?.hetech_email || '').toLowerCase();
         if (email && session.customer) {
           const customer = await findOrCreateCustomerByEmail(email);
           await linkPlatformIdentity({
@@ -93,6 +92,12 @@ router.post('/', async (req, res) => {
       default:
         break; // other event types are safely ignored
     }
+    // Recorded only on successful processing — not before — so a failed attempt
+    // (below) leaves the event unmarked and Stripe's automatic retry actually
+    // re-runs the real work instead of being short-circuited as "already seen".
+    // Re-running an already-succeeded event on a legitimate duplicate delivery
+    // is safe: every write above is an upsert.
+    await recordWebhookEventOnce({ platform: 'stripe', externalEventId: event.id, payload: event });
     res.json({ received: true });
   } catch (err) {
     // Returning 500 makes Stripe retry the delivery — desirable for transient DB errors.
